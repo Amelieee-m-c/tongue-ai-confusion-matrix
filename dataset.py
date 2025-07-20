@@ -1,38 +1,26 @@
-# ---- dataset.py ----
 import os
-from torch.utils.data import Dataset
+import pandas as pd
 from PIL import Image
-import numpy as np
+from torch.utils.data import Dataset
+import torchvision.transforms as T
+import torch
 
-class CustomDataset(Dataset):
-    def __init__(self, image_dir, mask_dir, image_transform=None, mask_transform=None):
-        self.image_dir = image_dir
-        self.mask_dir = mask_dir
-        self.image_transform = image_transform
-        self.mask_transform = mask_transform
-        self.images = sorted(os.listdir(image_dir))
-
+class TongueDataset(Dataset):
+    def __init__(self, csv_file, image_root, label_cols):
+        self.data = pd.read_csv(csv_file)
+        self.image_root = image_root
+        self.label_cols = label_cols
+        self.transform = T.Compose([
+            T.Resize((384, 384)),
+            T.ToTensor(),
+            T.Normalize([0.5]*3, [0.5]*3)
+        ])
     def __len__(self):
-        return len(self.images)
-
-    def __getitem__(self, index):
-        image_filename = self.images[index]
-        image_path = os.path.join(self.image_dir, image_filename)
-
-        # 將副檔名改為 .png，取得 mask 檔案
-        mask_filename = os.path.splitext(image_filename)[0] + '.png'
-        mask_path = os.path.join(self.mask_dir, mask_filename)
-
-
-        image = Image.open(image_path).convert("RGB")
-        mask = Image.open(mask_path).convert("L")
-
-        if self.image_transform:
-            image = self.image_transform(image)
-
-        if self.mask_transform:
-            mask = self.mask_transform(mask)
-
-        mask = (mask > 0).float()  # 確保是二值化的mask
-
-        return image, mask
+        return len(self.data)
+    def __getitem__(self, idx):
+        row = self.data.iloc[idx]
+        img_path = os.path.join(self.image_root, row['image_path'])
+        image = Image.open(img_path).convert("RGB")
+        image = self.transform(image)
+        labels = torch.tensor(row[self.label_cols].values.astype(float), dtype=torch.float32)
+        return image, labels

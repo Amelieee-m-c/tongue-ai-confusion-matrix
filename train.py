@@ -1,59 +1,73 @@
-# ---- train.py ----
 import torch
-import torch.nn as nn
-from utils import dice_score
+from torch.utils.data import DataLoader
+from torch import nn, optim
+from dataset import TongueDataset
+from model import SwinClassifier  # 輸入你的模型檔
+from sklearn.metrics import f1_score, accuracy_score
+import numpy as np
+from tqdm import tqdm  # 新增這行
 
-def eval_model(model, val_loader, device, epoch):
-    model.eval()
-    total_dice = 0
-    total_loss = 0
-    criterion = nn.BCELoss()
+def train_model(train_csv, val_csv, image_root, label_cols,
+                num_epochs=10, batch_size=8, lr=1e-4, model_path="swin_best.pth"):
 
-    with torch.no_grad():
-        for x, y in val_loader:
-            x, y = x.to(device), y.to(device)
-            out = torch.sigmoid(model(x))
-            loss = criterion(out, y)
-            preds = (out > 0.5).float()
-            total_dice += dice_score(preds, y).item()
-            total_loss += loss.item()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    avg_dice = total_dice / len(val_loader)
-    avg_loss = total_loss / len(val_loader)
-    print(f"[Validation] Epoch {epoch+1} | Dice: {avg_dice:.4f} | Loss: {avg_loss:.4f}")
-    return avg_dice
+    train_set = TongueDataset(train_csv, image_root, label_cols)
+    val_set = TongueDataset(val_csv, image_root, label_cols)
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_set, batch_size=batch_size)
 
+    model = SwinClassifier(num_classes=len(label_cols))
+    model.to(device)
 
-def train_model(model, train_loader, val_loader, optimizer, device, num_epochs=20, patience=5):
-    criterion = nn.BCELoss()
-    best_dice = 0
-    early_stop_counter = 0
+    criterion = nn.BCEWithLogitsLoss()
+    optimizer = optim.AdamW(model.parameters(), lr=lr)
 
+    best_f1 = 0
     for epoch in range(num_epochs):
         model.train()
-        total_loss = 0
-
-        for i, (x, y) in enumerate(train_loader):
-            x, y = x.to(device), y.to(device)
-            out = torch.sigmoid(model(x))
-            loss = criterion(out, y)
+        loop = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs} Training", leave=False)
+        for imgs, labels in loop:
+            imgs, labels = imgs.to(device), labels.to(device)
             optimizer.zero_grad()
+            outputs = model(imgs)
+            loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
-            total_loss += loss.item()
 
-        avg_train_loss = total_loss / len(train_loader)
-        print(f"[Train] Epoch {epoch+1} | Loss: {avg_train_loss:.4f}")
+            # 可在進度條上顯示當前 loss
+            loop.set_postfix(loss=loss.item())
 
-        val_dice = eval_model(model, val_loader, device, epoch)
+        # 驗證
+        model.eval()
+        all_preds = []
+        all_labels = []
+        with torch.no_grad():
+            for imgs, labels in val_loader:
+                imgs = imgs.to(device)
+                outputs = model(imgs)
+                preds = torch.sigmoid(outputs).cpu().numpy()
+                preds = (preds > 0.5).astype(int)
+                all_preds.append(preds)
+                all_labels.append(labels.cpu().numpy())
 
-        if val_dice > best_dice:
-            best_dice = val_dice
-            early_stop_counter = 0
-            torch.save(model.state_dict(), "best_model.pth")
-            print(f"[Model Saved] New best model at epoch {epoch+1} with Dice {val_dice:.4f}")
-        else:
-            early_stop_counter += 1
-            if early_stop_counter >= patience:
-                print(f"[Early Stop] No improvement in Dice for {patience} epochs. Stopping training.")
-                break
+        all_preds = np.vstack(all_preds)
+        all_labels = np.vstack(all_labels)
+
+        f1 = f1_score(all_labels, all_preds, average='micro')
+        print(f"Epoch {epoch+1}, Val Micro F1: {f1:.4f}")
+        if f1 > best_f1:
+            best_f1 = f1
+            torch.save(model.state_dict(), model_path)
+            print(f"✅ Saved best model to {model_path}")
+
+if __name__ == "__main__":
+    label_cols = ['TonguePale', 'TipSideRed', 'Spot', 'Ecchymosis', 'Crack', 'Toothmark', 'FurThick', 'FurYellow',
+                  'Heart', 'Lung', 'Spleen', 'Liver', 'Kidney']
+    
+    for i in range(1, 6):
+        train_csv = f"train_fold{i}.csv"
+        val_csv = f"val_fold{i}.csv"
+        model_path = f"swin_best_fold{i}.pth"
+        print(f"====== Training Fold {i} ======")
+        train_model(train_csv, val_csv, "images", label_cols, model_path=model_path)

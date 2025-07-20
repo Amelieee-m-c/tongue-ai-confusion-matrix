@@ -1,9 +1,7 @@
-# ---- utils.py ----
-def compute_accuracy(preds, labels):
-    return (preds == labels).sum().item() / torch.numel(preds)
+from sklearn.metrics import f1_score
+import torch
 
-def dice_score(preds, targets, epsilon=1e-6):
-    preds = preds.view(-1)
-    targets = targets.view(-1)
-    intersection = (preds * targets).sum()
-    return (2. * intersection + epsilon) / (preds.sum() + targets.sum() + epsilon)
+def calculate_metrics(preds, targets, threshold=0.5):
+    preds = (preds > threshold).float()
+    f1 = f1_score(targets.cpu(), preds.cpu(), average="macro")
+    return f1
