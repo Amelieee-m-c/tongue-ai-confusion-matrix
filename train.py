@@ -16,7 +16,7 @@ def compute_alpha_weights(csv_file, label_cols):
     return torch.tensor(alpha_weights, dtype=torch.float32)
 
 def train_model(train_csv, val_csv, image_root, label_cols,
-                num_epochs=10, batch_size=2, lr=1e-4, model_path="swin_best.pth"):
+                num_epochs=10, batch_size=4, lr=1e-4, model_path="swin_best.pth"):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
